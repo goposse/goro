@@ -92,6 +92,11 @@ func TestMain(t *testing.T) {
 
 	testHandle := chain.ThenFunc(testHandler)
 
+	router.SetStringVariable("a", "alpha$b$c")
+	router.SetStringVariable("b", "bar")
+	router.SetStringVariable("c", "$d")
+	router.SetStringVariable("d", "baz")
+
 	router.Add("GET", "/").
 		Handle(testHandle)
 	router.Add("GET", "/users/:id/*").
@@ -105,6 +110,8 @@ func TestMain(t *testing.T) {
 	router.Add("GET", "/users/:id/show/:what").
 		Handle(testHandle)
 	router.Add("GET", "/*").
+		Handle(testHandle)
+	router.Add("GET", "/$a$b").
 		Handle(testHandle)
 
 	reqMocks := []RequestMock{

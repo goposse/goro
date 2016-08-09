@@ -64,8 +64,12 @@ func (t *Tree) NewNode(part string, parent *Node) *Node {
 // AddRouteToTree splits the route into Nodes and adds them to the tree
 func (t *Tree) AddRouteToTree(route *Route, variables map[string]string) {
 	path := route.PathFormat
-	deslashedPath := path[1:len(path)]
+	deslashedPath := path
+	if strings.HasPrefix(deslashedPath, "/") {
+		deslashedPath = path[1:len(path)]
+	}
 	split := strings.Split(deslashedPath, "/")
+
 	if route.IsRoot() {
 		node := t.NewNode("/", nil)
 		if node.routes == nil {
@@ -73,22 +77,34 @@ func (t *Tree) AddRouteToTree(route *Route, variables map[string]string) {
 		}
 		node.routes[route.Method] = route
 	} else {
+		// check to see if we need to do any variable substitution before parsing
+		// NOTE: does not support nested variables
+		// fmt.Printf("[SKSEA DEBUG] split: %s\n", split)
+		processedSplit := []string{}
+		for _, component := range split {
+			if isVariablePart(component) {
+
+				variable := resolveVariable(component, variables, path)
+				deslashedVar := variable
+				if strings.HasPrefix(deslashedVar, "/") {
+					deslashedVar = deslashedVar[1:len(deslashedVar)]
+				}
+				splitVar := strings.Split(deslashedVar, "/")
+				processedSplit = append(processedSplit, splitVar...)
+			} else {
+				processedSplit = append(processedSplit, component)
+			}
+		}
+
+		split = processedSplit
+
 		var parentNode *Node
 		var node *Node
 		for _, component := range split {
-			componentToUse := component
-			// check to see if we need to do any variable substitution before parsing
-			if isVariablePart(component) {
-				componentToUse = variables[component]
-				if componentToUse == "" {
-					// we couldn't substitute the requested variable as there is no value definition
-					panic(fmt.Sprintf("Missing variable substitution for '%s'. route='%s'", component, path))
-				}
-			}
 			// get an existing node for this segment or attach to the tree
-			node = t.nodeForExactPart(componentToUse, parentNode)
+			node = t.nodeForExactPart(component, parentNode)
 			if node == nil {
-				node = t.NewNode(componentToUse, parentNode)
+				node = t.NewNode(component, parentNode)
 			}
 			parentNode = node
 		}
@@ -142,6 +158,60 @@ func isWildcardPart(part string) bool {
 
 func isCatchAllPart(part string) bool {
 	return strings.HasPrefix(part, "*")
+}
+
+func containsVariable(s string) bool {
+	return strings.Contains(s, "$")
+}
+
+// Returns a string with all variables resolved.
+// Takes in a string which may contain variables, a map 'variables' used
+// for lookup, and a string 'path' to construct panic statement if lookup fails.
+func resolveVariable(component string, variables map[string]string, path string) string {
+	resolved := ""
+	parts := splitVariableComponent(component)
+	for _, part := range parts {
+		// Split parts further to handle "/"s.
+		deslashedPart := strings.Split(part, "/")
+		for i, dsp := range deslashedPart {
+			if containsVariable(dsp) {
+				lookup := lookupVariable(dsp, variables, path)
+				// Lookup returned a string containing another variable.
+				if containsVariable(lookup) {
+					lookup = resolveVariable(lookup, variables, path)
+				}
+				deslashedPart[i] = lookup
+			}
+			// Recombine deslashed parts after they have been resolved.
+		}
+		resolvedPart := strings.Join(deslashedPart, "/")
+		resolved = strings.Join([]string{resolved, resolvedPart}, "")
+	}
+	return resolved
+}
+
+// Splits a string into variables, and non-variable strings.
+// For example, "foo$bar$baz" => []string{ "foo", "$bar", "$baz" }
+func splitVariableComponent(s string) []string {
+	separated := []string{}
+	delimIndex := strings.LastIndex(s, "$")
+	if delimIndex == -1 {
+		// No variable components left to split
+		separated = []string{s}
+	} else {
+		resolveNested := splitVariableComponent(s[:delimIndex])
+		separated = append(resolveNested, s[delimIndex:])
+	}
+	return separated
+}
+
+func lookupVariable(part string, variables map[string]string, path string) string {
+	lookup := variables[part]
+	if lookup == "" {
+		// we couldn't substitute the requested variable as there is no value definition
+		panic(fmt.Sprintf("Missing variable substitution for '%s'. route='%s'", part, path))
+	}
+	return lookup
 }
 
 // String is the string representation of the object when printing

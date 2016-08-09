@@ -108,13 +108,15 @@ func (r *Router) NewMatcher() *Matcher {
 // Add creates a new Route and registers the instance within the Router
 func (r *Router) Add(method string, path string) *Route {
 	route := NewRoute(method, path)
-	return r.Use(route)
+	return r.Use(route)[0]
 }
 
-// Use registers a Route instance within the Router
-func (r *Router) Use(route *Route) *Route {
-	r.routes.AddRouteToTree(route, r.variables)
-	return route
+// Use registers one or more Route instances within the Router
+func (r *Router) Use(routes ...*Route) []*Route {
+	for _, route := range routes {
+		r.routes.AddRouteToTree(route, r.variables)
+	}
+	return routes
 }
 
 // AddStatic registers a directory to serve static files
