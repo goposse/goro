@@ -41,6 +41,11 @@ func NewGroup(prefix string, router *Router) *Group {
 	}
 }
 
+
+func (g *Group) Group(prefix string) *Group {
+	return NewGroup(prefix, g.router)
+}
+
 // Add creates a new Route and registers the instance within the Router
 func (g *Group) Add(method string, routePath string) *Route {
 	route := NewRoute(method, path.Join(g.prefix, routePath))
