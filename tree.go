@@ -66,7 +66,7 @@ func (t *Tree) AddRouteToTree(route *Route, variables map[string]string) {
 	path := route.PathFormat
 	deslashedPath := path
 	if strings.HasPrefix(deslashedPath, "/") {
-		deslashedPath = path[1:len(path)]
+		deslashedPath = path[1:]
 	}
 	split := strings.Split(deslashedPath, "/")
 
@@ -79,12 +79,12 @@ func (t *Tree) AddRouteToTree(route *Route, variables map[string]string) {
 	} else {
 		// check to see if we need to do any variable substitution before parsing
 		// NOTE: does not support nested variables
-		processedSplit := []string{}
+		var processedSplit []string
 		for _, component := range split {
 			if isVariablePart(component) {
 				deslashedVar := resolveVariable(component, variables, path)
 				if strings.HasPrefix(deslashedVar, "/") {
-					deslashedVar = deslashedVar[1:len(deslashedVar)]
+					deslashedVar = deslashedVar[1:]
 				}
 				splitVar := strings.Split(deslashedVar, "/")
 				processedSplit = append(processedSplit, splitVar...)
@@ -197,7 +197,7 @@ func resolveVariable(component string, variables map[string]string, path string)
 // splitVariableComponent - Splits a string into variables, and non-variable
 // strings. For example, "foo$bar$baz" => []string{ "foo", "$bar", "$baz" }
 func splitVariableComponent(s string) []string {
-	separated := []string{}
+	var separated []string
 	delimIndex := strings.LastIndex(s, "$")
 	if delimIndex == -1 {
 		// No variable components left to split

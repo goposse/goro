@@ -64,7 +64,9 @@ func (rc *RouteCache) Get(path string) CacheEntry {
 	}
 	cacheEntry := CacheEntry{}
 	hash := fnv.New32a()
-	hash.Write([]byte(path))
+	if _, writeErr := hash.Write([]byte(path)); writeErr != nil {
+		return NotFoundCacheEntry()
+	}
 	pathHash := hash.Sum32()
 	var foundIdx = -1
 	for idx, hashKey := range rc.pathHashes {
@@ -113,7 +115,9 @@ func (rc *RouteCache) Put(path string, entry CacheEntry) {
 	defer rc.mutex.Unlock()
 
 	hash := fnv.New32a()
-	hash.Write([]byte(path))
+	if _, writeErr := hash.Write([]byte(path)); writeErr != nil {
+		return
+	}
 	allHashes := rc.pathHashes
 	allEntries := rc.Entries
 	pathHash := hash.Sum32()

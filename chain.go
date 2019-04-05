@@ -10,7 +10,6 @@
 package goro
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -31,15 +30,18 @@ type ChainResult struct {
 	Status     ChainStatus
 	Error      error
 	StatusCode int
-	Request    *http.Request
 }
+
+type ChainHandler func(*Chain, *HandlerContext)
+
+// ChainCompletedFunc - callback function executed when chain execution has
+// completed
+type ChainCompletedFunc func(result ChainResult)
 
 // Chain allows for chaining of Handlers
 type Chain struct {
-	handlerIndex   int
-	responseWriter http.ResponseWriter
-	request        *http.Request
-	router         *Router
+	handlerIndex int
+	router       *Router
 
 	// RouterCatchesErrors - if true and the chain is attached to a router then
 	// errors will bubble up to the router error handler
@@ -50,50 +52,12 @@ type Chain struct {
 	EmitHTTPError bool
 
 	// Handlers - the handlers in the Chain
-	Handlers []ChainHandler
+	handlers []ChainHandler
 
-	// stepCompletedFunc - used internally when a step is completed
-	stepCompletedFunc ChainStepCompletedFunc
+	completedCallback ChainCompletedFunc
 
-	// resultCompletedFunc - used internally when chain completes
-	resultCompletedFunc ChainCompletedFunc
-}
-
-// ChainStepCompletedFunc - callback function executed when chain has
-// completed a step
-type ChainStepCompletedFunc func(chain Chain, result ChainResult)
-
-// ChainCompletedFunc - callback function executed when chain execution has
-// completed
-type ChainCompletedFunc func(result ChainResult)
-
-// ChainHandler - Handler wrapper with access to the chain
-type ChainHandler interface {
-	Execute(chain Chain, w http.ResponseWriter, req *http.Request)
-}
-
-// ChainHandlerFunc - HandlerFunc wrapper with access to the chain
-type ChainHandlerFunc func(chain Chain, w http.ResponseWriter, req *http.Request)
-
-// Execute - execute the ChainHandlerFunc
-func (chf ChainHandlerFunc) Execute(chain Chain, w http.ResponseWriter, req *http.Request) {
-	chf(chain, w, req)
-}
-
-// chainHandlerWrapper - wraps a regular http.Handler for chaining purposes
-type chainHandlerWrapper struct {
-	handler http.Handler
-}
-
-// newChainHandlerWrapper - creates a new chain handler wrapper
-func newChainHandlerWrapper(handler http.Handler) chainHandlerWrapper {
-	return chainHandlerWrapper{
-		handler: handler,
-	}
-}
-
-func (chw chainHandlerWrapper) Execute(chain Chain, w http.ResponseWriter, req *http.Request) {
-	chw.handler.ServeHTTP(w, req)
+	// ChainCompletedFunc - called when chain completes
+	ChainCompletedFunc ChainCompletedFunc
 }
 
 // NewChain - creates a new Chain instance
@@ -101,143 +65,122 @@ func NewChain(handlers ...ChainHandler) Chain {
 	return Chain{
 		RouterCatchesErrors: true,
 		EmitHTTPError:       true,
-		Handlers:            handlers,
+		handlers:            handlers,
+		handlerIndex:        0,
 	}
 }
 
-// NewChainWithFuncs - creates a new Chain instance
-func NewChainWithFuncs(handlers ...ChainHandlerFunc) Chain {
-	allHandlers := make([]ChainHandler, 0, len(handlers))
-	for _, hfunc := range handlers {
-		allHandlers = append(allHandlers, ChainHandler(hfunc))
-	}
+func NewChainCopy(ch Chain) Chain {
+	return copyChain(ch)
+}
+
+func HC(handlers ...ChainHandler) Chain {
 	return Chain{
 		RouterCatchesErrors: true,
 		EmitHTTPError:       true,
-		Handlers:            allHandlers,
+		handlers:            handlers,
+		handlerIndex:        0,
 	}
 }
 
 // Append - returns a new chain with the ChainHandler appended to
 // the list of handlers
-func (ch Chain) Append(handlers ...ChainHandler) Chain {
-	allHandlers := make([]ChainHandler, 0, len(ch.Handlers)+len(handlers))
-	allHandlers = append(allHandlers, ch.Handlers...)
+func (ch *Chain) Append(handlers ...ChainHandler) Chain {
+	allHandlers := make([]ChainHandler, 0, len(ch.handlers)+len(handlers))
+	allHandlers = append(allHandlers, ch.handlers...)
 	allHandlers = append(allHandlers, handlers...)
-	return Chain{
-		RouterCatchesErrors: ch.RouterCatchesErrors,
-		EmitHTTPError:       ch.EmitHTTPError,
-		router:              ch.router,
-		Handlers:            allHandlers,
+	newChain := copyChain(*ch)
+	newChain.handlers = allHandlers
+	return newChain
+}
+
+// Then - calls the chain and then the designated Handler
+func (ch Chain) Then(handler ContextHandler) ContextHandler {
+	return func(ctx *HandlerContext) {
+		ch.completedCallback = func(result ChainResult) {
+			handler(ctx)
+		}
+		ch.startChain(ctx)
 	}
 }
 
-// AppendFunc - returns a new chain with the ChainHandlerFunc appended to
-// the list of handlers
-func (ch Chain) AppendFunc(handlers ...ChainHandlerFunc) Chain {
-	allHandlers := make([]ChainHandler, 0, len(ch.Handlers)+len(handlers))
-	allHandlers = append(allHandlers, ch.Handlers...)
-	for _, hfunc := range handlers {
-		allHandlers = append(allHandlers, ChainHandler(hfunc))
-	}
-	return Chain{
-		RouterCatchesErrors: ch.RouterCatchesErrors,
-		EmitHTTPError:       ch.EmitHTTPError,
-		router:              ch.router,
-		Handlers:            allHandlers,
+// Call - calls the chain
+func (ch Chain) Call() ContextHandler {
+	return func(ctx *HandlerContext) {
+		ch.startChain(ctx)
 	}
 }
 
-// Then calls the chain and then the designated Handler
-func (ch Chain) Then(handler http.Handler) Chain {
-	wrapper := newChainHandlerWrapper(handler)
-	return ch.Append(wrapper)
+func (ch *Chain) startChain(ctx *HandlerContext) {
+	ch.resetState()
+	ch.handlers[0](ch, ctx)
 }
 
-// ThenFunc calls the chain and then the designated HandlerFunc
-func (ch Chain) ThenFunc(handlerFunc http.HandlerFunc) Chain {
-	return ch.Then(http.Handler(handlerFunc))
+func (ch *Chain) doNext(ctx *HandlerContext) {
+	ch.handlerIndex++
+	handlersCount := len(ch.handlers)
+	if ch.handlerIndex >= handlersCount {
+		// nothing to execute. notify that the chain has finished
+		finish(ch, ChainCompleted, nil, 0)
+		return
+	}
+	// execute the current chain handler
+	ch.handlers[ch.handlerIndex](ch, ctx)
 }
 
 // Next - execute the next handler in the chain
-func (ch Chain) Next(req *http.Request) {
-	ch.request = req
-	ch.handlerIndex++
-	handlersCount := len(ch.Handlers)
-	if ch.handlerIndex < handlersCount {
-		ch.Handlers[ch.handlerIndex].Execute(ch, ch.responseWriter, ch.request)
-	}
-	result := ChainResult{Request: ch.request, Status: ChainCompleted, Error: nil}
-	if ch.stepCompletedFunc != nil {
-		ch.stepCompletedFunc(ch, result)
-	}
-	if ch.handlerIndex == handlersCount {
-		if ch.resultCompletedFunc != nil {
-			ch.resultCompletedFunc(result)
-		}
-		ch.reset()
-	}
+func (ch *Chain) Next(ctx *HandlerContext) {
+	ch.doNext(ctx)
 }
 
 // Halt - halt chain execution
-func (ch Chain) Halt(req *http.Request, haltError error) {
-	ch.request = req
-	result := ChainResult{Request: ch.request, Status: ChainHalted, Error: haltError, StatusCode: http.StatusInternalServerError}
-	if ch.stepCompletedFunc != nil {
-		ch.stepCompletedFunc(ch, result)
-	}
-	if ch.resultCompletedFunc != nil {
-		ch.resultCompletedFunc(result)
-	}
-	ch.reset()
+func (ch *Chain) Halt(ctx *HandlerContext) {
+	finish(ch, ChainHalted, nil, 0)
 }
 
 // Error - halt the chain and report an error
-func (ch Chain) Error(req *http.Request, chainError error, statusCode int) {
-	ch.request = req
-	result := ChainResult{Request: ch.request, Status: ChainError, Error: chainError, StatusCode: statusCode}
-	if ch.stepCompletedFunc != nil {
-		ch.stepCompletedFunc(ch, result)
+func (ch *Chain) Error(ctx *HandlerContext, chainError error, statusCode int) {
+	finish(ch, ChainError, chainError, statusCode)
+	if ch.router != nil && ch.RouterCatchesErrors {
+		ch.router.emitError(ctx, chainError.Error(), statusCode)
+	} else if ch.EmitHTTPError {
+		http.Error(ctx.ResponseWriter, chainError.Error(), statusCode)
 	}
-	if ch.resultCompletedFunc != nil {
-		ch.resultCompletedFunc(result)
-	}
-	ch.reset()
+}
+
+func (ch Chain) Copy() Chain {
+	return copyChain(ch)
 }
 
 // reset - resets the chain
-func (ch Chain) reset() {
+func (ch *Chain) resetState() {
 	ch.handlerIndex = 0
 }
 
-// ServeHTTP - execute default functionality
-func (ch Chain) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if len(ch.Handlers) > 0 {
-		ch.reset()
-		ch.responseWriter = w
-		ch.request = req
-		ch.stepCompletedFunc = stepCompleted
-		ch.Handlers[0].Execute(ch, w, req)
+func finish(chain *Chain, status ChainStatus, chainError error, statusCode int) ChainResult {
+	result := ChainResult{
+		Status:     status,
+		Error:      chainError,
+		StatusCode: statusCode,
 	}
+	if chain.completedCallback != nil {
+		chain.completedCallback(result)
+	}
+	if chain.ChainCompletedFunc != nil {
+		chain.ChainCompletedFunc(result)
+	}
+	chain.resetState()
+	return result
 }
 
-func stepCompleted(chain Chain, result ChainResult) {
-	if result.Error != nil {
-		if chain.RouterCatchesErrors && chain.router != nil {
-			err := ErrorMap{
-				"code":        RouterErrorCode(result.StatusCode),
-				"status_code": result.StatusCode,
-				"message":     result.Error.Error(),
-			}
-			errCtx := context.WithValue(chain.request.Context(), ErrorValueContextKey, err)
-			chain.router.emitError(
-				chain.responseWriter,
-				chain.request.WithContext(errCtx),
-				result.Error,
-				result.StatusCode,
-			)
-		} else if chain.EmitHTTPError {
-			http.Error(chain.responseWriter, result.Error.Error(), result.StatusCode)
-		}
+func copyChain(chain Chain) Chain {
+	return Chain{
+		RouterCatchesErrors: chain.RouterCatchesErrors,
+		EmitHTTPError:       chain.EmitHTTPError,
+		router:              chain.router,
+		handlers:            chain.handlers,
+		handlerIndex:        chain.handlerIndex,
+		ChainCompletedFunc:  chain.ChainCompletedFunc,
+		completedCallback:   chain.completedCallback,
 	}
 }

@@ -9,12 +9,8 @@
 
 package goro
 
-import (
-	"net/http"
-)
-
 // Filter is an interface that can be registered on the Router to apply custom
 // logic to modify the Request or calling Context
 type Filter interface {
-	ExecuteFilter(req **http.Request)
+	ExecuteFilter(ctx *HandlerContext)
 }
