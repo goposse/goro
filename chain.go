@@ -100,14 +100,16 @@ func (ch Chain) Then(handler ContextHandler) ContextHandler {
 		ch.completedCallback = func(result ChainResult) {
 			handler(ctx)
 		}
-		ch.startChain(ctx)
+		cChain := copyChain(ch)
+		cChain.startChain(ctx)
 	}
 }
 
 // Call - calls the chain
 func (ch Chain) Call() ContextHandler {
 	return func(ctx *HandlerContext) {
-		ch.startChain(ctx)
+		cChain := copyChain(ch)
+		cChain.startChain(ctx)
 	}
 }
 
