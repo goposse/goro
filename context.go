@@ -42,3 +42,10 @@ func (hc *HandlerContext) SetState(key string, value interface{}) {
 	hc.state[key] = value
 	hc.Unlock()
 }
+
+func (hc *HandlerContext) GetState(key string) interface{} {
+	hc.RLock()
+	state := hc.state[key]
+	hc.RUnlock()
+	return state
+}
