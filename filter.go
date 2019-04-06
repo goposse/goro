@@ -12,5 +12,6 @@ package goro
 // Filter is an interface that can be registered on the Router to apply custom
 // logic to modify the Request or calling Context
 type Filter interface {
-	ExecuteFilter(ctx *HandlerContext)
+	ExecuteBefore(ctx *HandlerContext)
+	ExecuteAfter(ctx *HandlerContext)
 }

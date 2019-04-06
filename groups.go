@@ -15,7 +15,8 @@ func NewGroup(prefix string, router *Router) *Group {
 }
 
 func (g *Group) Group(prefix string) *Group {
-	return NewGroup(prefix, g.router)
+	fullPrefix := path.Join(g.prefix, prefix)
+	return NewGroup(fullPrefix, g.router)
 }
 
 // Add creates a new Route and registers the instance within the Router

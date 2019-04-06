@@ -25,6 +25,14 @@ func TestMain(m *testing.M) {
 	router.GET("/users/:id").Handle(testParamsHandler)
 	router.GET("/users/:id/action/:action").Handle(testParamsHandler)
 	router.GET("/colors/$color").Handle(testHandler)
+	// route groups
+	apiGroup := router.Group("/api")
+	v1Group := apiGroup.Group("/v1")
+	v1Group.GET("/").Handle(testHandler)
+	v1Group.POST("/").Handle(testHandler)
+	v1Group.GET("/stats").Handle(testHandler)
+	apiDocsGroup := v1Group.Group("/docs")
+	apiDocsGroup.GET("/stats").Handle(testHandler)
 	// chain tests
 	router.GET("/chain/simple").Handle(goro.HC(chainHandlers...).Call())
 	router.GET("/chain/then").Handle(goro.HC(chainHandlers...).Then(testThenHandler))

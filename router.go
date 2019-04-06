@@ -207,12 +207,7 @@ func (r *Router) SetStringVariable(variable string, value string) {
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// create the context we're going to use for the request lifecycle
-	hContext := &HandlerContext{
-		Request:        req,
-		ResponseWriter: w,
-		router:         r,
-		Meta:           map[string]interface{}{},
-	}
+	hContext := NewHandlerContext(req, w, r)
 	if r.ErrorHandler != nil {
 		defer r.recoverPanic(hContext)
 	}
@@ -220,7 +215,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// execute all the filters
 	if r.filters != nil && len(r.filters) > 0 {
 		for _, filter := range r.filters {
-			filter.ExecuteFilter(hContext)
+			filter.ExecuteBefore(hContext)
 		}
 	}
 	// prepare the request info
@@ -272,6 +267,11 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		hContext.CatchAllValue = match.CatchAllValue
 	}
 	handler(hContext)
+	if r.filters != nil && len(r.filters) > 0 {
+		for _, filter := range r.filters {
+			filter.ExecuteAfter(hContext)
+		}
+	}
 }
 
 func (r *Router) shouldServeStaticFile(w http.ResponseWriter, req *http.Request, servePath string) (fileExists bool, filePath string) {
@@ -319,7 +319,7 @@ func (r *Router) emitError(context *HandlerContext, errMessage string, errCode i
 
 }
 
-func errorHandler(w http.ResponseWriter, req *http.Request, errorString string, errorCode int) {
+func errorHandler(w http.ResponseWriter, _ *http.Request, errorString string, errorCode int) {
 	http.Error(w, errorString, errorCode)
 }
 

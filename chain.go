@@ -16,6 +16,8 @@ import (
 // ChainStatus - the status of the chain
 type ChainStatus int
 
+const handlerIndexStateKey = "_goro.chainHandlerIndex"
+
 const (
 	// ChainCompleted - the chain completed normally
 	ChainCompleted ChainStatus = 1 << iota
@@ -40,8 +42,7 @@ type ChainCompletedFunc func(result ChainResult)
 
 // Chain allows for chaining of Handlers
 type Chain struct {
-	handlerIndex int
-	router       *Router
+	router *Router
 
 	// RouterCatchesErrors - if true and the chain is attached to a router then
 	// errors will bubble up to the router error handler
@@ -66,12 +67,7 @@ func NewChain(handlers ...ChainHandler) Chain {
 		RouterCatchesErrors: true,
 		EmitHTTPError:       true,
 		handlers:            handlers,
-		handlerIndex:        0,
 	}
-}
-
-func NewChainCopy(ch Chain) Chain {
-	return copyChain(ch)
 }
 
 func HC(handlers ...ChainHandler) Chain {
@@ -79,7 +75,6 @@ func HC(handlers ...ChainHandler) Chain {
 		RouterCatchesErrors: true,
 		EmitHTTPError:       true,
 		handlers:            handlers,
-		handlerIndex:        0,
 	}
 }
 
@@ -114,20 +109,22 @@ func (ch Chain) Call() ContextHandler {
 }
 
 func (ch *Chain) startChain(ctx *HandlerContext) {
-	ch.resetState()
+	ch.resetState(ctx)
 	ch.handlers[0](ch, ctx)
 }
 
 func (ch *Chain) doNext(ctx *HandlerContext) {
-	ch.handlerIndex++
+	hIdx := ctx.state[handlerIndexStateKey].(int)
+	hIdx++
+	ctx.SetState(handlerIndexStateKey, hIdx)
 	handlersCount := len(ch.handlers)
-	if ch.handlerIndex >= handlersCount {
+	if hIdx >= handlersCount {
 		// nothing to execute. notify that the chain has finished
-		finish(ch, ChainCompleted, nil, 0)
+		finish(ch, ctx, ChainCompleted, nil, 0)
 		return
 	}
 	// execute the current chain handler
-	ch.handlers[ch.handlerIndex](ch, ctx)
+	ch.handlers[hIdx](ch, ctx)
 }
 
 // Next - execute the next handler in the chain
@@ -137,12 +134,12 @@ func (ch *Chain) Next(ctx *HandlerContext) {
 
 // Halt - halt chain execution
 func (ch *Chain) Halt(ctx *HandlerContext) {
-	finish(ch, ChainHalted, nil, 0)
+	finish(ch, ctx, ChainHalted, nil, 0)
 }
 
 // Error - halt the chain and report an error
 func (ch *Chain) Error(ctx *HandlerContext, chainError error, statusCode int) {
-	finish(ch, ChainError, chainError, statusCode)
+	finish(ch, ctx, ChainError, chainError, statusCode)
 	if ch.router != nil && ch.RouterCatchesErrors {
 		ch.router.emitError(ctx, chainError.Error(), statusCode)
 	} else if ch.EmitHTTPError {
@@ -155,11 +152,11 @@ func (ch Chain) Copy() Chain {
 }
 
 // reset - resets the chain
-func (ch *Chain) resetState() {
-	ch.handlerIndex = 0
+func (ch *Chain) resetState(ctx *HandlerContext) {
+	ctx.SetState(handlerIndexStateKey, 0)
 }
 
-func finish(chain *Chain, status ChainStatus, chainError error, statusCode int) ChainResult {
+func finish(chain *Chain, ctx *HandlerContext, status ChainStatus, chainError error, statusCode int) ChainResult {
 	result := ChainResult{
 		Status:     status,
 		Error:      chainError,
@@ -171,7 +168,7 @@ func finish(chain *Chain, status ChainStatus, chainError error, statusCode int) 
 	if chain.ChainCompletedFunc != nil {
 		chain.ChainCompletedFunc(result)
 	}
-	chain.resetState()
+	chain.resetState(ctx)
 	return result
 }
 
@@ -181,7 +178,6 @@ func copyChain(chain Chain) Chain {
 		EmitHTTPError:       chain.EmitHTTPError,
 		router:              chain.router,
 		handlers:            chain.handlers,
-		handlerIndex:        chain.handlerIndex,
 		ChainCompletedFunc:  chain.ChainCompletedFunc,
 		completedCallback:   chain.completedCallback,
 	}
