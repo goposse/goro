@@ -49,3 +49,9 @@ func (hc *HandlerContext) GetState(key string) interface{} {
 	hc.RUnlock()
 	return state
 }
+
+func (hc *HandlerContext) ClearState(key string) {
+	hc.Lock()
+	hc.state[key] = nil
+	hc.Unlock()
+}
