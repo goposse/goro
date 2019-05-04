@@ -10,18 +10,20 @@
 package goro
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 )
 
 // Router is the main routing class
 type Router struct {
 
-	// ErrorHandler - generic error handler
-	ErrorHandler ContextHandler
+	// errorHandler - generic error handler
+	errorHandler ContextHandler
 
 	// ShouldCacheMatchedRoutes - if true then any matched routes should be cached
 	// according to the path they were matched to
@@ -70,7 +72,7 @@ type Router struct {
 // NewRouter - creates a new default instance of the Router type
 func NewRouter() *Router {
 	router := &Router{
-		ErrorHandler:             nil,
+		errorHandler:             nil,
 		ShouldCacheMatchedRoutes: true,
 		alwaysUseFirstMatch:      false,
 		methodNotAllowedIsError:  true,
@@ -143,6 +145,10 @@ func (r *Router) Add(method string, routePath string) *Route {
 	return r.Use(route)[0]
 }
 
+func (r *Router) AddBundle(bundle Bundle) {
+	//processBundle(bundle)
+}
+
 // Add creates a new Route using the GET method and registers the instance within the Router
 func (r *Router) GET(routePath string) *Route {
 	return r.Add("GET", routePath)
@@ -186,6 +192,12 @@ func (r *Router) SetGlobalHandler(method string, handler ContextHandler) {
 	r.globalHandlers[strings.ToUpper(method)] = handler
 }
 
+// SetRouterErrorHandler configures a ContextHandler to handle all general router errors
+// (i.e.: non-network related)
+func (r *Router) SetRouterErrorHandler(handler ContextHandler) {
+	r.errorHandler = handler
+}
+
 // SetErrorHandler configures a ContextHandler to handle all errors for the supplied status code
 func (r *Router) SetErrorHandler(statusCode int, handler ContextHandler) {
 	r.errorHandlers[statusCode] = handler
@@ -207,11 +219,11 @@ func (r *Router) SetStringVariable(variable string, value string) {
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// create the context we're going to use for the request lifecycle
-	hContext := NewHandlerContext(req, w, r)
-	if r.ErrorHandler != nil {
+	respWriter := NewCheckedResponseWriter(w)
+	hContext := NewHandlerContext(req, respWriter, r)
+	if r.errorHandler != nil {
 		defer r.recoverPanic(hContext)
 	}
-
 	// execute all the filters
 	if r.filters != nil && len(r.filters) > 0 {
 		for _, filter := range r.filters {
@@ -233,9 +245,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	match := r.routeMatcher.MatchPathToRoute(method, cleanPath, callingRequest)
 	if match == nil || len(match.Node.routes) == 0 {
 		// check to see if there is a file match
-		fileExists, filename := r.shouldServeStaticFile(w, req, cleanPath)
+		fileExists, filename := r.shouldServeStaticFile(respWriter, req, cleanPath)
 		if fileExists {
-			http.ServeFile(w, req, filename)
+			ServeFile(hContext, filename, http.StatusOK)
 			return
 		}
 		// no match
@@ -251,9 +263,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if match.Node.nodeType == ComponentTypeCatchAll {
 		// check to see if we should serve a static file at that location before falling
 		// through to the catch all
-		fileExists, filename := r.shouldServeStaticFile(w, req, cleanPath)
+		fileExists, filename := r.shouldServeStaticFile(respWriter, req, cleanPath)
 		if fileExists {
-			http.ServeFile(w, req, filename)
+			ServeFile(hContext, filename, http.StatusOK)
 			return
 		}
 	}
@@ -267,11 +279,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		hContext.CatchAllValue = match.CatchAllValue
 	}
 	handler(hContext)
-	if r.filters != nil && len(r.filters) > 0 {
-		for _, filter := range r.filters {
-			filter.ExecuteAfter(hContext)
-		}
-	}
+	r.executePostFilters(hContext)
 }
 
 func (r *Router) shouldServeStaticFile(w http.ResponseWriter, req *http.Request, servePath string) (fileExists bool, filePath string) {
@@ -301,47 +309,75 @@ func (r *Router) shouldServeStaticFile(w http.ResponseWriter, req *http.Request,
 }
 
 // error handling
-func (r *Router) emitError(context *HandlerContext, errMessage string, errCode int) {
+func (r *Router) emitError(context *HandlerContext, errMessage string, statusCode int) {
+	routingError := RoutingError{
+		StatusCode: statusCode,
+		Message:    errMessage,
+		ErrorCode:  0,
+		Error:      nil,
+	}
+	context.Errors = append(context.Errors, routingError)
 	// try to call specific error handler
-	errHandler := r.errorHandlers[errCode]
+	errHandler := r.errorHandlers[statusCode]
 	if errHandler != nil {
 		errHandler(context)
+		r.executePostFilters(context)
 		return
 	}
 	// if generic error handler defined, call that
-	if r.ErrorHandler != nil {
-		r.ErrorHandler(context)
+	if r.errorHandler != nil {
+		r.errorHandler(context)
+		r.executePostFilters(context)
 		return
 	}
 	// return a generic http error
 	errorHandler(context.ResponseWriter, context.Request,
-		errMessage, errCode)
-
+		errMessage, statusCode)
+	r.executePostFilters(context)
 }
 
-func errorHandler(w http.ResponseWriter, _ *http.Request, errorString string, errorCode int) {
-	http.Error(w, errorString, errorCode)
+func (r *Router) executePostFilters(ctx *HandlerContext) {
+	hasDonePost := ctx.internalState[StateKeyHasExecutedPostFilters]
+	if hasDonePost == nil {
+		if r.filters != nil && len(r.filters) > 0 {
+			for _, filter := range r.filters {
+				filter.ExecuteAfter(ctx)
+			}
+		}
+		ctx.internalState[StateKeyHasExecutedPostFilters] = true
+	}
+}
+
+func errorHandler(w http.ResponseWriter, _ *http.Request, errorString string, statusCode int) {
+	http.Error(w, errorString, statusCode)
 }
 
 func (r *Router) recoverPanic(handlerContext *HandlerContext) {
 	if panicRecover := recover(); panicRecover != nil {
 		var message string
+		var err error
 		switch panicRecover.(type) {
 		case error:
-			message = panicRecover.(error).Error()
+			err = panicRecover.(error)
+			message = err.Error()
 		case string:
 			message = panicRecover.(string)
+			err = errors.New(message)
 		default:
 			message = "Panic! Please check the 'error' value for details"
+			err = errors.New(message)
 		}
-		err := ErrorMap{
-			"code":        ErrorCodePanic,
-			"status_code": http.StatusInternalServerError,
-			"message":     message,
-			"error":       panicRecover,
+		routingErr := RoutingError{
+			ErrorCode:  ErrorCodePanic,
+			StatusCode: http.StatusInternalServerError,
+			Message:    message,
+			Error:      err,
+			Info: ErrorInfoMap{
+				"stack": debug.Stack(),
+			},
 		}
-		handlerContext.Errors = append(handlerContext.Errors, err)
-		r.ErrorHandler(handlerContext)
+		handlerContext.Errors = append(handlerContext.Errors, routingErr)
+		r.errorHandler(handlerContext)
 	}
 }
 

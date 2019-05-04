@@ -5,7 +5,7 @@ Goro is a mighty fine routing toolkit for Go web applications. It is designed to
 be fast, yet flexible.
 
 [![CircleCI](https://circleci.com/gh/theyakka/goro.svg?style=svg)](https://circleci.com/gh/theyakka/goro)
-[![Go Version](https://img.shields.io/badge/Go-1.7+-lightgrey.svg)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.11+-lightgrey.svg)](https://golang.org/)
 [![codecov](https://codecov.io/gh/theyakka/goro/branch/master/graph/badge.svg)](https://codecov.io/gh/theyakka/goro)
 
 
@@ -13,17 +13,15 @@ be fast, yet flexible.
 
 Goro is LOADED with features, but no bloat.
 
-- Built in `Context` support while maintaining standard Go `http.Handler` interfaces
-- Flexible routing options with *wildcards* and *variables*
+- Straightforward context handling / management
+- Flexible routing options with **wildcards** and **variables**
 - Prioritized route definitions with caching
-- Handler `Filter`s that allow for pre-execution `Request` or `Context` modification
+- Pre and Post execution `Filter`s to modify `Request` or `HandlerContext` objects or to perform post-execution logic if embedding.
 - Static asset mapping
 - Support for subdomains
 - Handler chaining built-in
 
 # Installing
-
-**Goro requires Go 1.7+.** We recommend using the latest version of Go if you can.
 
 To install, run:
 
@@ -39,16 +37,34 @@ import github.com/theyakka/goro
 
 # Getting started
 
-The basic code breakdown looks something like this:
+Setting up a basic router would look something like the following.
+
+In your `main/server.go` file you would create a `Router` instance, configure a basic route, and then pass the router to `http.ListenAndServe` as a handler. 
 
 ```go
-router := goro.NewRouter()
-router.Add("GET", "/").HandleFunc(rootHandler)
-http.ListenAndServe(":8080", router)
+package main
+
+func startServer() {
+	router := goro.NewRouter()
+	router.GET("/").Handle(handlers.RootHandler)
+	log.Fatal(http.ListenAndServe(":8080", router))
+}
 ```
 
-Pretty standard for most routers in Go. But Goro has so much more going for it. Rather
+Then in your `handlers` package (or where you define your routes) you would set up your `RootHandler` function.
+
+```go
+package handlers
+
+func RootHandler(ctx *goro.HandlerContext) {
+	// do something here
+}
+``` 
+
+That's just a quick intro. However, Goro has so much more packed in. Rather
 than try to describe it all here, you should check out [The Goro Guide](https://github.com/theyakka/goro/wiki).
+
+We recommend using the latest version of Go.
 
 # FAQ
 

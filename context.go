@@ -14,6 +14,11 @@ import (
 	"sync"
 )
 
+const (
+	StateKeyHasExecutedPreFilters  = "_goro.skey.hasExecutedPreFilters"
+	StateKeyHasExecutedPostFilters = "_goro.skey.hasExecutedPostFilters"
+)
+
 type HandlerContext struct {
 	sync.RWMutex
 	Request        *http.Request
@@ -22,9 +27,10 @@ type HandlerContext struct {
 	Meta           map[string]interface{}
 	Path           string
 	CatchAllValue  string
-	Errors         []ErrorMap
+	Errors         []RoutingError
 	router         *Router
 	state          map[string]interface{}
+	internalState  map[string]interface{}
 }
 
 func NewHandlerContext(request *http.Request, responseWriter http.ResponseWriter, router *Router) *HandlerContext {
@@ -34,6 +40,7 @@ func NewHandlerContext(request *http.Request, responseWriter http.ResponseWriter
 		router:         router,
 		Meta:           map[string]interface{}{},
 		state:          map[string]interface{}{},
+		internalState:  map[string]interface{}{},
 	}
 }
 
@@ -54,4 +61,28 @@ func (hc *HandlerContext) ClearState(key string) {
 	hc.Lock()
 	hc.state[key] = nil
 	hc.Unlock()
+}
+
+func (hc *HandlerContext) HasError() bool {
+	return len(hc.Errors) > 0
+}
+
+func (hc *HandlerContext) ErrorForStatus(status int) RoutingError {
+	for _, err := range hc.Errors {
+		if err.StatusCode == status {
+			return err
+		}
+	}
+	return EmptyRoutingError()
+}
+
+func (hc *HandlerContext) HasErrorForStatus(status int) bool {
+	return !IsEmptyRoutingError(hc.ErrorForStatus(status))
+}
+
+func (hc *HandlerContext) FirstError() RoutingError {
+	if len(hc.Errors) > 0 {
+		return hc.Errors[0]
+	}
+	return EmptyRoutingError()
 }
