@@ -57,16 +57,16 @@ func resetState() {
 	sum = 0
 }
 
-func expectHitResult(t *testing.T, router *goro.Router, method string, path string) {
+func expectHitResult(t *testing.T, handler http.Handler, method string, path string) {
 	Debug("Requesting", path, "...")
-	execMockRequest(router, method, path)
+	execMockRequest(handler, method, path)
 	if !wasHit {
 		t.Error("Expected", path, "to be HIT but it wasn't")
 	}
 	resetState()
 }
 
-func expectNotHitResult(t *testing.T, router *goro.Router, method string, path string) {
+func expectNotHitResult(t *testing.T, handler http.Handler, method string, path string) {
 	Debug("Requesting", path, "...")
 	execMockRequest(router, method, path)
 	if wasHit {
@@ -75,10 +75,10 @@ func expectNotHitResult(t *testing.T, router *goro.Router, method string, path s
 	resetState()
 }
 
-func execMockRequest(router *goro.Router, method string, path string) {
-	req, _ := http.NewRequest(method, path, nil)
+func execMockRequest(handler http.Handler, method string, url string) {
+	req, _ := http.NewRequest(method, url, nil)
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	handler.ServeHTTP(w, req)
 }
 
 func Debug(v ...interface{}) {
